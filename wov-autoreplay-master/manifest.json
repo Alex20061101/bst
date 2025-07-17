@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "version": "0.0.1",
+  "name": "Wov Autoreplay",
+  "description": "https://discord.gg/D2xS2zDvft",
+  "content_scripts": [
+    {
+      "js": ["lib/jquery-3.7.1.min.js", "main.js"],
+      "matches": ["https://www.wolvesville.com/**"],
+      "run_at": "document_start"
+    }
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "permissions": ["debugger", "tabs"]
+}

@@ -1,0 +1,24 @@
+{
+    "manifest_version": 3,
+    "name": "Λbstract",
+    "version": "1.5.9",
+    "description": "Makes your life easier.",
+    "permissions": ["tabs", "debugger", "scripting"],
+    "host_permissions": ["https://www.wolvesville.com/*"],
+    "content_scripts": [
+        {
+            "matches": ["https://www.wolvesville.com/*"],
+            "js": ["Λbstract.js"],
+            "run_at": "document_start"
+        }
+    ],
+    "web_accessible_resources": [
+        {
+            "resources": ["Λbstract.js"],
+            "matches": ["https://www.wolvesville.com/*"]
+        }
+    ],
+    "background": {
+        "service_worker": "background.js"
+    }
+}
