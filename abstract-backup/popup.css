@@ -67,8 +67,13 @@ html, body {
     font-size: 1rem;
 }
 
-#nameInput {
+/* Hide the input container by default. JS will show it. */
+.name-edit {
     display: none;
+}
+
+#nameInput {
+    /* This rule was conflicting with the JS logic, so it is removed. */
     font-size: 1rem;
     padding: 4px 8px;
     border-radius: 6px;
@@ -83,9 +88,6 @@ html, body {
     color: var(--purple-main);
     font-size: 1.2rem;
     cursor: pointer;
-}
-.name-edit button {
-    display: none;
 }
 
 .license-row {

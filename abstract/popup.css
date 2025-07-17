@@ -1,0 +1,184 @@
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500&display=swap');
+
+:root {
+    --purple-main: #a270f4;
+    --dark-bg: #0e0e0e;
+    --text-light: #f2e9ff;
+    --ok-green: #2ecc71;
+    --err-red: #e74c3c;
+}
+
+html, body {
+    margin: 0;
+    padding: 0;
+    width: 350px;
+    font-family: 'Poppins', sans-serif;
+    background: url('e0a209b3-8504-4363-a7ee-2ea9dc292435.png') no-repeat center/cover;
+    color: var(--text-light);
+    overflow: hidden;
+}
+
+.popup-container {
+    padding: 16px;
+    background: rgba(14, 14, 14, 0.85);
+    border-radius: 12px;
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.5);
+}
+
+/* Header */
+.popup-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: var(--purple-main);
+    padding: 8px 12px;
+    border-radius: 8px;
+    color: var(--dark-bg);
+    font-size: 1.1rem;
+    font-weight: 500;
+}
+
+.burger {
+    width: 20px;
+    height: 14px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+}
+.burger::before,
+.burger::after,
+.burger div {
+    content: '';
+    display: block;
+    height: 2px;
+    background: var(--dark-bg);
+    border-radius: 1px;
+}
+.burger div {
+    margin: 3px 0;
+}
+
+/* Name and license */
+.name-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 16px;
+    font-size: 1rem;
+}
+
+/* Hide the input container by default. JS will show it. */
+.name-edit {
+    display: none;
+}
+
+#nameInput {
+    /* This rule was conflicting with the JS logic, so it is removed. */
+    font-size: 1rem;
+    padding: 4px 8px;
+    border-radius: 6px;
+    border: none;
+    outline: none;
+}
+
+.name-edit button,
+.edit-icon {
+    background: none;
+    border: none;
+    color: var(--purple-main);
+    font-size: 1.2rem;
+    cursor: pointer;
+}
+
+.license-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.9rem;
+    margin-top: 4px;
+}
+.license-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: gray;
+}
+.license-dot.valid {
+    background: var(--ok-green);
+}
+.license-dot.invalid {
+    background: var(--err-red);
+}
+.license-time {
+    margin-left: auto;
+    font-size: 0.85rem;
+    opacity: 0.9;
+}
+
+/* Play button */
+.play-pause-section {
+    display: flex;
+    justify-content: center;
+    margin-top: 18px;
+}
+.wolf-background {
+    position: relative;
+    width: 130px;
+    height: 130px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+.wolf-background img {
+    width: 100%;
+    opacity: 0.9;
+}
+.play-button {
+    position: absolute;
+    width: 60px;
+    height: 60px;
+    background: var(--purple-main);
+    border: none;
+    border-radius: 50%;
+    cursor: pointer;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    transition: transform 0.2s ease-in-out;
+}
+.play-button:hover:not(:disabled) {
+    transform: scale(1.05);
+}
+.play-button:disabled {
+    filter: grayscale(0.6) brightness(0.7);
+    cursor: not-allowed;
+}
+#playIcon {
+    font-size: 1.6rem;
+    color: var(--dark-bg);
+}
+
+/* Timer & bot status */
+.timer {
+    text-align: center;
+    font-size: 1.2rem;
+    margin: 14px 0 6px;
+}
+.bot-status {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.95rem;
+    font-weight: 300;
+}
+.bot-status-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: gray;
+}
+.bot-status-dot.running {
+    background: var(--ok-green);
+}

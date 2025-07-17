@@ -22,19 +22,18 @@
     },
     "permissions": ["tabs", "scripting", "storage", "debugger"],
     "host_permissions": [
-        "https://www.wolvesville.com/*",
-        "https://abstract-project.onrender.com/*"
+        "https://www.wolvesville.com/*"
     ],
     "content_scripts": [
         {
             "matches": ["https://www.wolvesville.com/*"],
-            "js": ["Λbstract.js"],
+            "js": ["AutoCustom.js"],
             "run_at": "document_start"
         }
     ],
     "web_accessible_resources": [
         {
-            "resources": ["Λbstract.js"],
+            "resources": ["AutoCustom.js"],
             "matches": ["https://www.wolvesville.com/*"]
         }
     ],
