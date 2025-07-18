@@ -5,6 +5,18 @@
 
 const CLIENT_VERSION = '1.6';
 const WOLF_ROLES = new Set(['Wolf', 'Junior Werewolf', 'Split Wolf']);
+const DEBUG = false; // Set to true for verbose logging in the console
+
+/**
+ * A conditional logger that only prints to the console if DEBUG is true.
+ * @param  {...any} args Arguments to pass to console.log
+ */
+function log(...args) {
+    if (DEBUG) {
+        console.log('[Λbstract]', ...args);
+    }
+}
+
 
 // --- Core Helper & Utility Functions ---
 
@@ -18,12 +30,12 @@ function click(element, button = 'left') {
     const x = rect.left + rect.width / 2;
     const y = rect.top + rect.height / 2;
 
-    console.log(`[Λbstract] Request click @ ${x}, ${y} → ${element.textContent.trim()}`);
+    log(`Request click @ ${x}, ${y} → ${element.textContent.trim()}`);
     chrome.runtime.sendMessage({ action: 'performClick', x, y, button }, response => {
         if (chrome.runtime.lastError) {
-            console.error(`[Λbstract] sendMessage error: ${chrome.runtime.lastError.message}`);
+            console.error(`[Λbstract] sendMessage error: ${chrome.runtime.lastError.message}`); // Keep errors visible
         } else {
-            console.log('[Λbstract] BG responded:', response);
+            log('BG responded:', response);
         }
     });
 }
@@ -92,13 +104,60 @@ function waitForCondition(conditionFn, timeout, interval, cancelText) {
  * @returns {Promise<HTMLElement | null>}
  */
 function waitForTextInDOM(text, { timeout = 30000, interval = 200, cancelText = null } = {}) {
-    return waitForCondition(() => {
-        for (const el of document.body.querySelectorAll('*')) {
-            if (el.textContent.includes(text) && isVisible(el)) {
-                return el;
-            }
+    // First, check if the element already exists to avoid setting up an observer unnecessarily.
+    for (const el of document.body.querySelectorAll('*')) {
+        if (el.textContent.includes(text) && isVisible(el)) {
+            return Promise.resolve(el);
         }
-    }, timeout, interval, cancelText);
+    }
+
+    // Use a more performant MutationObserver to wait for the text to appear.
+    return new Promise(resolve => {
+        let timeoutHandle = null;
+        const observer = new MutationObserver((mutations, obs) => {
+            if (cancelText && document.body.innerText.includes(cancelText)) {
+                clearTimeout(timeoutHandle);
+                obs.disconnect();
+                return resolve(null);
+            }
+
+            const checkNode = (node) => {
+                if (node.nodeType !== Node.ELEMENT_NODE) return null;
+                if (node.textContent.includes(text) && isVisible(node)) return node;
+                // Check children of the mutated node
+                for (const child of node.querySelectorAll('*')) {
+                    if (child.textContent.includes(text) && isVisible(child)) return child;
+                }
+                return null;
+            };
+
+            for (const mutation of mutations) {
+                for (const node of mutation.addedNodes) {
+                    const found = checkNode(node);
+                    if (found) {
+                        clearTimeout(timeoutHandle);
+                        obs.disconnect();
+                        return resolve(found);
+                    }
+                }
+                if (mutation.type === 'characterData' && mutation.target.parentElement) {
+                    const found = checkNode(mutation.target.parentElement);
+                    if (found) {
+                        clearTimeout(timeoutHandle);
+                        obs.disconnect();
+                        return resolve(found);
+                    }
+                }
+            }
+        });
+
+        timeoutHandle = setTimeout(() => {
+            observer.disconnect();
+            resolve(null);
+        }, timeout);
+
+        observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+    });
 }
 
 /**
@@ -109,13 +168,60 @@ function waitForTextInDOM(text, { timeout = 30000, interval = 200, cancelText = 
  */
 function waitForExactText(text, { timeout = 30000, interval = 200, cancelText = null } = {}) {
     const textRegex = new RegExp(`\\b${text}\\b`);
-    return waitForCondition(() => {
-        for (const el of document.body.querySelectorAll('*')) {
-            if (textRegex.test(el.textContent) && isVisible(el)) {
-                return el;
-            }
+
+    // First, check if the element already exists.
+    for (const el of document.body.querySelectorAll('*')) {
+        if (textRegex.test(el.textContent) && isVisible(el)) {
+            return Promise.resolve(el);
         }
-    }, timeout, interval, cancelText);
+    }
+
+    // Use a more performant MutationObserver.
+    return new Promise(resolve => {
+        let timeoutHandle = null;
+        const observer = new MutationObserver((mutations, obs) => {
+            if (cancelText && document.body.innerText.includes(cancelText)) {
+                clearTimeout(timeoutHandle);
+                obs.disconnect();
+                return resolve(null);
+            }
+
+            const checkNode = (node) => {
+                if (node.nodeType !== Node.ELEMENT_NODE) return null;
+                if (textRegex.test(node.textContent) && isVisible(node)) return node;
+                for (const child of node.querySelectorAll('*')) {
+                    if (textRegex.test(child.textContent) && isVisible(child)) return child;
+                }
+                return null;
+            };
+
+            for (const mutation of mutations) {
+                for (const node of mutation.addedNodes) {
+                    const found = checkNode(node);
+                    if (found) {
+                        clearTimeout(timeoutHandle);
+                        obs.disconnect();
+                        return resolve(found);
+                    }
+                }
+                if (mutation.type === 'characterData' && mutation.target.parentElement) {
+                    const found = checkNode(mutation.target.parentElement);
+                    if (found) {
+                        clearTimeout(timeoutHandle);
+                        obs.disconnect();
+                        return resolve(found);
+                    }
+                }
+            }
+        });
+
+        timeoutHandle = setTimeout(() => {
+            observer.disconnect();
+            resolve(null);
+        }, timeout);
+
+        observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+    });
 }
 
 /**
@@ -165,16 +271,22 @@ function waitForImageCountInDOM(imageNamePart, count = 2, { timeout = 30000, int
  */
 async function clickAndVerifyDisappear(verifyDisappearText, findElementFn, retries = 3) {
     for (let i = 0; i < retries; i++) {
+        // If the text is already gone, we don't need to do anything.
+        if (!findTextInDocument(verifyDisappearText)) return;
+
         const elementToClick = findElementFn();
-        if (!elementToClick) break;
+        if (!elementToClick) {
+            // Can't find the button, wait a moment in case it's slow to appear.
+            await sleep(200);
+            continue;
+        }
 
         click(elementToClick);
-        await sleep(300);
 
-        const isStillVisible = Array.from(document.querySelectorAll('*'))
-            .some(el => el.textContent.includes(verifyDisappearText) && isVisible(el));
-
-        if (!isStillVisible) break;
+        // Actively wait for the text to disappear instead of a fixed sleep. This is much faster.
+        const disappeared = await waitForCondition(() => !findTextInDocument(verifyDisappearText), 1500, 50);
+        
+        if (disappeared) return; // Success, exit the function.
     }
 }
 
@@ -427,14 +539,14 @@ function gameIsOver() {
  * @param {number} [voteMarkersToFind=2]
  */
 async function shooterAction(playerInfo, coupleElements, allPlayerElements, voteMarkersToFind = 2) {
-    console.log(`[Λ] shooterAction: looking for ${voteMarkersToFind} vote marker(s)`);
+    log(`shooterAction: looking for ${voteMarkersToFind} vote marker(s)`);
     const VOTE_MARKER_IMG = 'vote_day_selected';
     if (voteMarkersToFind > 4) return;
 
     await waitForImageCountInDOM(VOTE_MARKER_IMG, voteMarkersToFind, { timeout: 90000, cancelText: 'Continue' });
     if (gameIsOver()) return;
 
-    console.log('[Λ] Clicking bullet icon...');
+    log('Clicking bullet icon...');
     clickElementByImage(/.*gunner_bullet.*\.png/);
     await sleep(200);
 
@@ -446,7 +558,7 @@ async function shooterAction(playerInfo, coupleElements, allPlayerElements, vote
     );
 
     if (target) {
-        console.log('[Λ] Shooter found target:', target?.textContent.trim());
+        log('Shooter found target:', target?.textContent.trim());
         clickElementByImageInElement(target, /.*gunner_voting_shoot.*\.png/);
         return;
     }
@@ -467,7 +579,7 @@ async function shooterAction(playerInfo, coupleElements, allPlayerElements, vote
 async function inGameDay(playerInfo, coupleElements, playerImages, allPlayerElements) {
     if (gameIsOver()) return;
 
-    console.log(`[Λ] inGameDay(): role = ${playerInfo.role} | Lovers = ${coupleElements.map(c => c?.textContent.trim())}`);
+    log(`inGameDay(): role = ${playerInfo.role} | Lovers = ${coupleElements.map(c => c?.textContent.trim())}`);
 
     const isWolfCoupled = WOLF_ROLES.has(playerInfo.coupleRole1) || WOLF_ROLES.has(playerInfo.coupleRole2);
 
@@ -482,7 +594,7 @@ async function inGameDay(playerInfo, coupleElements, playerImages, allPlayerElem
             }
 
             if (gameIsOver()) return;
-            console.log('[Λ] Wolf sending number:', playerInfo.number);
+            log('Wolf sending number:', playerInfo.number);
             const chatInput = document.querySelector('textarea');
             const valueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
             valueSetter.call(chatInput, playerInfo.number);
@@ -502,7 +614,7 @@ async function inGameDay(playerInfo, coupleElements, playerImages, allPlayerElem
             await waitForImageInDOM('vote_day_selected', { timeout: 90000, cancelText: 'Continue' });
             if (gameIsOver()) return;
 
-            console.log('[Λ] Role ability triggered:', playerInfo.role);
+            log('Role ability triggered:', playerInfo.role);
             clickElementByImage(ability.triggerRegex);
             await sleep(200);
 
@@ -516,12 +628,12 @@ async function inGameDay(playerInfo, coupleElements, playerImages, allPlayerElem
         const alreadyVotedForCouple = playerImages.some(imgSet => imgSet.some(img => img.includes('cupid')));
         if (!alreadyVotedForCouple) {
             const targetLover = WOLF_ROLES.has(playerInfo.coupleRole1) ? coupleElements[0] : coupleElements[1];
-            console.log('[Λ] Voting couple:', targetLover.textContent.trim());
+            log('Voting couple:', targetLover.textContent.trim());
             clickOutermostElement(targetLover);
         }
 
         if (playerInfo.role === 'Priest') {
-            console.log('[Λ] Role ability triggered:', playerInfo.role);
+            log('Role ability triggered:', playerInfo.role);
             clickElementByImage(/.*priest_holy_water.*\.png/);
             setTimeout(() => {
                 const votedPlayer = allPlayerElements.find(p => findImageInElement(p, /.*priest_holy_water.*\.png/));
@@ -543,12 +655,12 @@ async function inGameDay(playerInfo, coupleElements, playerImages, allPlayerElem
  */
 async function inGameNight(playerInfo, coupleElements, allPlayerElements) {
     if (gameIsOver()) return;
-    console.log(`[Λ] inGameNight(): role = ${playerInfo.role}`);
+    log(`inGameNight(): role = ${playerInfo.role}`);
 
     // --- Night Helper Functions ---
     const sendMessageAndAct = async (message, targetElement) => {
         if (gameIsOver()) return;
-        console.log(`[Λ] sendAction: ${message} | Target: ${targetElement?.textContent.trim()}`);
+        log(`sendAction: ${message} | Target: ${targetElement?.textContent.trim()}`);
         const chatInput = document.querySelector('textarea');
         const valueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
         valueSetter.call(chatInput, message);
@@ -571,7 +683,7 @@ async function inGameNight(playerInfo, coupleElements, allPlayerElements) {
         if (areBothPartnersWolves || isSoloWolfCoupled) return;
         if (gameIsOver()) return;
 
-        console.log('[Λ] handleWolfTag() triggered for:', playerInfo.role);
+        log('handleWolfTag() triggered for:', playerInfo.role);
         await waitForTextInDOM('25s', { cancelText: 'Continue' });
         if (gameIsOver() || findTextInDocument('Voting')) return;
 
@@ -593,7 +705,7 @@ async function inGameNight(playerInfo, coupleElements, allPlayerElements) {
                 .filter(num => !nonLoverNumbers.includes(num))[0];
 
             if (!taggedNumber) return;
-            console.log('[Λ] Target number chosen:', taggedNumber);
+            log('Target number chosen:', taggedNumber);
             const targetPlayerElement = allPlayerElements[parseInt(taggedNumber, 10) - 1];
             const targetImage = [...targetPlayerElement.querySelectorAll('img')].find(img => selectionMarkerRegex.test(img.src));
             const clickableButton = targetImage?.closest('[tabindex="0"]:not([disabled])');
@@ -711,8 +823,8 @@ async function inGame(myName) {
         coupleRole2: getRoleFromImage(coupleRoleImages[1]),
     };
 
-    console.log('[Λ] Player object:', playerInfo);
-    console.log(`[Λ] Detected phase: ${isDay() ? 'Day' : isNight() ? 'Night' : 'Unknown'}`);
+    log('Player object:', playerInfo);
+    log(`Detected phase: ${isDay() ? 'Day' : isNight() ? 'Night' : 'Unknown'}`);
 
     if (isDay()) {
         await inGameDay(playerInfo, coupleElements, myImageSets, allPlayerElements);
@@ -732,7 +844,8 @@ async function playAgain() {
     await clickAndVerifyDisappear('Continue', () =>
         Array.from(document.querySelectorAll('[tabindex="0"]')).find(el =>
             el.textContent.includes('Continue') && isVisible(el) && el.getBoundingClientRect().top > 100
-        )
+        ),
+        1 // Reduce retries to 1, as the action is usually reliable.
     );
 
     // Click "Play again" button
@@ -816,7 +929,7 @@ function startBot(name) {
     if (BOT_RUNNING) return;
     BOT_RUNNING = true;
     ACTIVE_NAME = name;
-    console.log('[Λbstract] Starting bot as', name);
+    console.log('[Λbstract] Starting bot as', name); // Keep this one for explicit user feedback
     // The sendHeartbeat function is an online-only feature.
     // It's commented out to prevent errors and ensure offline functionality.
 
@@ -824,10 +937,10 @@ function startBot(name) {
         try {
             await main(name);
         } catch (error) {
-            console.error('[Λbstract] main() error:', error);
+            console.error('[Λbstract] main() error:', error); // Keep errors visible
         } finally {
             if (BOT_RUNNING) {
-                loopHandle = setTimeout(loop, 1000);
+                loopHandle = setTimeout(loop, 500); // Check game state more frequently.
             }
         }
     }
@@ -838,10 +951,50 @@ function startBot(name) {
 function stopBot() {
     if (!BOT_RUNNING) return;
     BOT_RUNNING = false;
-    console.log('[Λbstract] Bot paused');
+    console.log('[Λbstract] Bot paused'); // Keep this one for explicit user feedback
     if (loopHandle) {
         clearTimeout(loopHandle);
     }
+}
+
+/**
+ * Exposes a status check function to the browser console for debugging.
+ * Can be called by typing `abstractStatus()` in the console.
+ */
+function checkStatus() {
+    if (BOT_RUNNING) {
+        console.log(
+            `%c[Λbstract] Bot is RUNNING. %c\nVersion: ${CLIENT_VERSION}\nPlayer: ${ACTIVE_NAME}`,
+            'color: #4CAF50; font-weight: bold;',
+            'color: inherit; font-weight: normal;'
+        );
+    } else {
+        console.log(
+            `%c[Λbstract] Bot is STOPPED. %c\nVersion: ${CLIENT_VERSION}`,
+            'color: #F44336; font-weight: bold;',
+            'color: inherit; font-weight: normal;'
+        );
+    }
+}
+window.abstractStatus = checkStatus;
+
+/**
+ * Injects a small script into the main page's context to provide console access.
+ * This is necessary because content scripts run in an isolated world, and the
+ * console cannot access their functions directly. This creates a bridge.
+ */
+function grantConsoleAccess() {
+    // Create a script tag to load our bridge script.
+    const script = document.createElement('script');
+    // Load the script from the extension's resources. This is allowed by the site's CSP,
+    // whereas inline scripts are not. The path must match what's in manifest.json.
+    script.src = chrome.runtime.getURL('bridge.js');
+    // Once the script is loaded and executed, we can remove the tag from the DOM.
+    script.onload = () => script.remove();
+    (document.head || document.documentElement).appendChild(script);
+
+    // The content script still listens for the event dispatched by the injected script.
+    window.addEventListener('__abstract_check_status_request', () => checkStatus());
 }
 
 /**
@@ -861,3 +1014,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse?.({ ok: true });
     return true; // Indicates we will respond asynchronously
 });
+
+// --- Initialization ---
+// Defer granting console access until the DOM is ready to avoid race conditions,
+// especially since the content script runs at `document_start`.
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', grantConsoleAccess, { once: true });
+} else {
+    grantConsoleAccess();
+}

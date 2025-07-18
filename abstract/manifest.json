@@ -33,7 +33,7 @@
     ],
     "web_accessible_resources": [
         {
-            "resources": ["AutoCustom.js"],
+            "resources": ["bridge.js"],
             "matches": ["https://www.wolvesville.com/*"]
         }
     ],
