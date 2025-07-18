@@ -489,7 +489,7 @@ async function inGameDay(playerInfo, coupleElements, playerImages, allPlayerElem
             chatInput.dispatchEvent(new Event('input', { bubbles: true }));
             chatInput.dispatchEvent(new Event('change', { bubbles: true }));
             clickElementByImage(/.*icon_send.*\.png/);
-            sleep(1000);
+            await sleep(500);
         } else {
             // I am a villager, not coupled with a wolf. Use special abilities.
             const abilities = {
@@ -546,7 +546,7 @@ async function inGameNight(playerInfo, coupleElements, allPlayerElements) {
     console.log(`[Λ] inGameNight(): role = ${playerInfo.role}`);
 
     // --- Night Helper Functions ---
-    const sendMessageAndAct = (message, targetElement) => {
+    const sendMessageAndAct = async (message, targetElement) => {
         if (gameIsOver()) return;
         console.log(`[Λ] sendAction: ${message} | Target: ${targetElement?.textContent.trim()}`);
         const chatInput = document.querySelector('textarea');
@@ -554,10 +554,8 @@ async function inGameNight(playerInfo, coupleElements, allPlayerElements) {
         valueSetter.call(chatInput, message);
         chatInput.dispatchEvent(new Event('input', { bubbles: true }));
         chatInput.dispatchEvent(new Event('change', { bubbles: true }));
-        // Simulate pressing the Enter key
-        chatInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', which: 13 }));
-        chatInput.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', which: 13 }));
-        //clickElementByImage(/.*icon_send.*\.png/);
+        clickElementByImage(/.*icon_send.*\.png/);
+        await sleep(500);
 
         if (targetElement) {
             const isNotPriestCoupled = playerInfo.coupleRole1 !== 'Priest' && playerInfo.coupleRole2 !== 'Priest';
