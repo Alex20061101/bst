@@ -838,48 +838,39 @@ async function inGame(myName) {
  * Handles the logic for post-game screens.
  */
 async function playAgain() {
-    if (document.body.innerText.includes('Waiting for players')) return;
+    if (findTextInDocument('Waiting for players')) return;
 
-    // Click "Continue" button
-    await clickAndVerifyDisappear('Continue', () =>
+    // 1. Wait for and click the "Continue" button.
+    // This is robust: it's instant if the button is there, and patient if it's loading.
+    const continueButton = await waitForCondition(() => 
         Array.from(document.querySelectorAll('[tabindex="0"]')).find(el =>
             el.textContent.includes('Continue') && isVisible(el) && el.getBoundingClientRect().top > 100
-        ),
-        1 // Reduce retries to 1, as the action is usually reliable.
+        ), 10000, 200, 'START GAME' // Wait up to 10s, cancel if we are back in lobby
     );
+    if (continueButton) {
+        click(continueButton);
+    }
 
-    // Click "Play again" button
-    await waitForTextInDOM('Play again', { cancelText: 'INVENTORY' });
-    const playAgainButton = Array.from(document.querySelectorAll('[tabindex="0"]')).find(el =>
-        el.textContent.includes('Play again') && isVisible(el) && el.getBoundingClientRect().top > 100
+    // 2. Wait for and click the "Play again" button.
+    const playAgainButton = await waitForCondition(() =>
+        Array.from(document.querySelectorAll('[tabindex="0"]')).find(el =>
+            el.textContent.includes('Play again') && isVisible(el) && el.getBoundingClientRect().top > 100
+        ), 5000, 200, 'INVENTORY' // Wait up to 5s
     );
     if (playAgainButton) {
         click(playAgainButton);
     }
-    await sleep(300);
 
-    // Handle the "Are you sure you want to leave?" popup by clicking "OK"
-    await waitForCondition(() => {
-        return Array.from(document.querySelectorAll('[tabindex="0"]')).some(el => {
-            if (!el.textContent.includes('OK') || !isVisible(el) || el.getBoundingClientRect().top <= 100) return false;
-            // Make sure there is a "Cancel" button nearby to confirm it's the right popup
-            return Array.from(el.parentElement?.querySelectorAll('[tabindex="0"]') || []).some(sibling =>
-                sibling !== el && sibling.textContent.includes('Cancel') && isVisible(sibling)
-            );
-        });
-    }, 3000, 200);
-
-    const okButton = Array.from(document.querySelectorAll('[tabindex="0"]')).find(el => {
+    // 3. Handle the optional "Are you sure you want to leave?" popup by clicking "OK".
+    const okButton = await waitForCondition(() => Array.from(document.querySelectorAll('[tabindex="0"]')).find(el => {
         if (!el.textContent.includes('OK') || !isVisible(el) || el.getBoundingClientRect().top <= 100) return false;
         return Array.from(el.parentElement?.querySelectorAll('[tabindex="0"]') || []).some(sibling =>
             sibling !== el && sibling.textContent.includes('Cancel') && isVisible(sibling)
         );
-    });
-
+    }), 3000, 200); // Wait up to 3s for this optional popup
     if (okButton) {
         click(okButton);
     }
-    await sleep(300);
 }
 
 // --- Main Bot Loop & Control ---
