@@ -845,7 +845,7 @@ async function playAgain() {
     const continueButton = await waitForCondition(() => 
         Array.from(document.querySelectorAll('[tabindex="0"]')).find(el =>
             el.textContent.includes('Continue') && isVisible(el) && el.getBoundingClientRect().top > 100
-        ), 10000, 200, 'START GAME' // Wait up to 10s, cancel if we are back in lobby
+        ), Infinity, 200, 'START GAME' // Wait infinitely, cancel if we are back in lobby
     );
     if (continueButton) {
         click(continueButton);
@@ -855,7 +855,7 @@ async function playAgain() {
     const playAgainButton = await waitForCondition(() =>
         Array.from(document.querySelectorAll('[tabindex="0"]')).find(el =>
             el.textContent.includes('Play again') && isVisible(el) && el.getBoundingClientRect().top > 100
-        ), 5000, 200, 'INVENTORY' // Wait up to 5s
+        ), Infinity, 200, 'INVENTORY' // Wait infinitely
     );
     if (playAgainButton) {
         click(playAgainButton);
