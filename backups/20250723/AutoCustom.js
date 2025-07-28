@@ -6,16 +6,6 @@
 const CLIENT_VERSION = '1.6';
 const WOLF_ROLES = new Set(['Wolf', 'Junior Werewolf', 'Split Wolf']);
 const DEBUG = true; // Set to true for verbose logging in the console
-const GameState = {
-    UNKNOWN: 'UNKNOWN',
-    LOBBY: 'LOBBY',
-    ROLE_SELECTION: 'ROLE_SELECTION',
-    IN_GAME: 'IN_GAME',
-    POST_GAME: 'POST_GAME',
-    CUSTOM: 'CUSTOM',
-    HOME_SCREEN: 'HOME_SCREEN',
-    GAME_SCREEN: 'GAME_SCREEN'
-};
 
 /**
  * A conditional logger that only prints to the console if DEBUG is true.
@@ -27,8 +17,6 @@ function log(...args) {
     }
 }
 
-// --- Visual Debugger for Clicks ---
-let clickDebugger = null;
 
 // --- Core Helper & Utility Functions ---
 
@@ -42,9 +30,6 @@ function click(element, button = 'left') {
     const x = rect.left + rect.width / 2;
     const y = rect.top + rect.height / 2;
 
-    // Show a visual indicator at the click location for debugging.
-    showClickAt(x, y);
-
     log(`Request click @ ${x}, ${y} → ${element.textContent.trim()}`);
     chrome.runtime.sendMessage({ action: 'performClick', x, y, button }, response => {
         if (chrome.runtime.lastError) {
@@ -53,45 +38,6 @@ function click(element, button = 'left') {
             log('BG responded:', response);
         }
     });
-}
-
-/**
- * Creates a visual element on the page to show where clicks are happening.
- * This is a debugging tool and is only active when DEBUG is true.
- * @returns {HTMLElement} The debugger element.
- */
-function createClickDebugger() {
-    const el = document.createElement('div');
-    el.id = '__click_debugger';
-    Object.assign(el.style, {
-        position: 'fixed',
-        width: '10px',
-        height: '10px',
-        backgroundColor: 'red',
-        borderRadius: '50%',
-        zIndex: '99999',
-        pointerEvents: 'none',
-        opacity: '0.8',
-        transition: 'opacity 0.5s ease-out',
-        display: 'none'
-    });
-    document.body.appendChild(el);
-    return el;
-}
-
-/**
- * Displays the click debugger at the specified coordinates.
- * @param {number} x The x-coordinate of the click.
- * @param {number} y The y-coordinate of the click.
- */
-function showClickAt(x, y) {
-    if (!DEBUG) return;
-    if (!clickDebugger) clickDebugger = createClickDebugger();
-    
-    clickDebugger.style.left = `${x - 5}px`; // Center the dot
-    clickDebugger.style.top = `${y - 5}px`;
-    clickDebugger.style.display = 'block';
-    setTimeout(() => { if (clickDebugger) clickDebugger.style.display = 'none'; }, 500);
 }
 
 /**
@@ -164,13 +110,60 @@ function waitForCondition(conditionFn, timeout, interval, cancelConditions) {
  * @returns {Promise<HTMLElement | null>}
  */
 function waitForTextInDOM(text, { timeout = 30000, interval = 200, cancelText = null } = {}) {
-    return waitForCondition(() => {
-        for (const el of document.body.querySelectorAll('*')) {
-            if (el.textContent.includes(text) && isVisible(el)) {
-                return el;
-            }
+    // First, check if the element already exists to avoid setting up an observer unnecessarily.
+    for (const el of document.body.querySelectorAll('*')) {
+        if (el.textContent.includes(text) && isVisible(el)) {
+            return Promise.resolve(el);
         }
-    }, timeout, interval, cancelText);
+    }
+
+    // Use a more performant MutationObserver to wait for the text to appear.
+    return new Promise(resolve => {
+        let timeoutHandle = null;
+        const observer = new MutationObserver((mutations, obs) => {
+            if (cancelText && document.body.innerText.includes(cancelText)) {
+                clearTimeout(timeoutHandle);
+                obs.disconnect();
+                return resolve(null);
+            }
+
+            const checkNode = (node) => {
+                if (node.nodeType !== Node.ELEMENT_NODE) return null;
+                if (node.textContent.includes(text) && isVisible(node)) return node;
+                // Check children of the mutated node
+                for (const child of node.querySelectorAll('*')) {
+                    if (child.textContent.includes(text) && isVisible(child)) return child;
+                }
+                return null;
+            };
+
+            for (const mutation of mutations) {
+                for (const node of mutation.addedNodes) {
+                    const found = checkNode(node);
+                    if (found) {
+                        clearTimeout(timeoutHandle);
+                        obs.disconnect();
+                        return resolve(found);
+                    }
+                }
+                if (mutation.type === 'characterData' && mutation.target.parentElement) {
+                    const found = checkNode(mutation.target.parentElement);
+                    if (found) {
+                        clearTimeout(timeoutHandle);
+                        obs.disconnect();
+                        return resolve(found);
+                    }
+                }
+            }
+        });
+
+        timeoutHandle = setTimeout(() => {
+            observer.disconnect();
+            resolve(null);
+        }, timeout);
+
+        observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+    });
 }
 
 /**
@@ -181,13 +174,60 @@ function waitForTextInDOM(text, { timeout = 30000, interval = 200, cancelText = 
  */
 function waitForExactText(text, { timeout = 30000, interval = 200, cancelText = null } = {}) {
     const textRegex = new RegExp(`\\b${text}\\b`);
-    return waitForCondition(() => {
-        for (const el of document.body.querySelectorAll('*')) {
-            if (textRegex.test(el.textContent) && isVisible(el)) {
-                return el;
-            }
+
+    // First, check if the element already exists.
+    for (const el of document.body.querySelectorAll('*')) {
+        if (textRegex.test(el.textContent) && isVisible(el)) {
+            return Promise.resolve(el);
         }
-    }, timeout, interval, cancelText);
+    }
+
+    // Use a more performant MutationObserver.
+    return new Promise(resolve => {
+        let timeoutHandle = null;
+        const observer = new MutationObserver((mutations, obs) => {
+            if (cancelText && document.body.innerText.includes(cancelText)) {
+                clearTimeout(timeoutHandle);
+                obs.disconnect();
+                return resolve(null);
+            }
+
+            const checkNode = (node) => {
+                if (node.nodeType !== Node.ELEMENT_NODE) return null;
+                if (textRegex.test(node.textContent) && isVisible(node)) return node;
+                for (const child of node.querySelectorAll('*')) {
+                    if (textRegex.test(child.textContent) && isVisible(child)) return child;
+                }
+                return null;
+            };
+
+            for (const mutation of mutations) {
+                for (const node of mutation.addedNodes) {
+                    const found = checkNode(node);
+                    if (found) {
+                        clearTimeout(timeoutHandle);
+                        obs.disconnect();
+                        return resolve(found);
+                    }
+                }
+                if (mutation.type === 'characterData' && mutation.target.parentElement) {
+                    const found = checkNode(mutation.target.parentElement);
+                    if (found) {
+                        clearTimeout(timeoutHandle);
+                        obs.disconnect();
+                        return resolve(found);
+                    }
+                }
+            }
+        });
+
+        timeoutHandle = setTimeout(() => {
+            observer.disconnect();
+            resolve(null);
+        }, timeout);
+
+        observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+    });
 }
 
 /**
@@ -363,32 +403,6 @@ function clickOutermostElement(container) {
         }
     });
     click(outermostElement);
-}
-
-/**
- * Finds the most deeply nested, visible, and enabled clickable element containing specific text.
- * This is useful for buttons that might not be standard elements but have a role or tabindex.
- * @param {string} text The text to search for.
- * @returns {HTMLElement | null} The found element or null.
- */
-function findDeepestClickableElementByText(text) {
-    const selector = '[tabindex="0"], button, [role="button"]';
-    const candidates = Array.from(document.querySelectorAll(selector))
-        .filter(el => el.textContent.includes(text) && isVisible(el) && !el.disabled);
-
-    if (candidates.length === 0) {
-        return null;
-    }
-
-    if (candidates.length === 1) {
-        return candidates[0];
-    }
-
-    // Find the most deeply nested element to avoid clicking a container that also contains the text.
-    return candidates.reduce((deepest, current) => {
-        const getDepth = (e) => { let d = 0; while (e.parentElement) { d++; e = e.parentElement; } return d; };
-        return getDepth(current) > getDepth(deepest) ? current : deepest;
-    });
 }
 
 // --- Game State Parsing Functions ---
@@ -762,65 +776,6 @@ async function inGameNight(playerInfo, coupleElements, allPlayerElements) {
     }
 }
 
-/**
- * Handles the logic for the game lobby (e.g., clicking "START GAME").
- */
-async function handleLobbyState() {
-    // The brittle position check (`.top > 100`) was removed in favor of the more reliable isVisible().
-    const startGameButton = Array.from(document.querySelectorAll('[tabindex="0"]')).find(el =>
-        el.textContent.includes('START GAME') && isVisible(el)
-    );
-}
-
-/**
- * Handles the logic for the role selection screen.
- */
-async function handleRoleSelectionState() {
-    if (findImageInDocument('instigator')) {
-        // The bot wants to be Cupid if it gets the Instigator role.
-        clickInnermostElementByImage('cupid');
-    }
-}
-
-/**
- * Analyzes the page to determine the current game state.
- * @returns {string} The current state from the GameState object.
- */
-function determineGameState() {
-    const pageText = document.body.innerText;
-
-    // The order of these checks is important. More specific/dominant states should be checked first.
-
-    // 1. Post-game and In-game states are very specific and should be checked before menu/lobby states.
-    if (pageText.includes('Continue')) {
-        return GameState.POST_GAME;
-    }
-    if ((pageText.includes('Welcome to the werewolves chat.') || pageText.includes('Voting')) && !gameIsOver()) {
-        return GameState.IN_GAME;
-    }
-    // 2. Role selection is a clear state between lobby and game.
-    if (pageText.includes('SELECT A ROLE') || pageText.includes('Team: You belong to')) {
-        return GameState.ROLE_SELECTION;
-    }
-    // 3. Menu states. By checking for specific menu screens before the general lobby,
-    // we can simplify the logic. The order here is from most-specific to least-specific.
-    if (pageText.includes('CREATE GAME')) {
-        return GameState.CUSTOM;
-    }
-    if (pageText.includes('CUSTOM GAME')) {
-        return GameState.GAME_SCREEN;
-    }
-    if (pageText.includes('INVENTORY')) {
-        return GameState.HOME_SCREEN;
-    }
-    // 4. The lobby is the "default" waiting state. This check is now simple because
-    // the more specific menu states have already been ruled out.
-    if ((pageText.includes('MORE PLAYERS REQUIRED') || pageText.includes('START GAME')) && pageText.includes('INVITE')) {
-        return GameState.LOBBY;
-    }
-
-    return GameState.UNKNOWN;
-}
 
 /**
  * Parses the initial game state to build the playerInfo object.
@@ -892,250 +847,42 @@ async function playAgain() {
     if (findTextInDocument('Waiting for players')) return;
 
     /**
-     * A more robust function to find, wait, click, and verify a button press.
-     * It waits for a button, adds a cooldown, clicks it, and verifies it disappears.
-     * @param {string} buttonText The text on the button to click.
-     * @param {object} [options={}]
-     * @param {string | string[]} [options.cancelText=null] Text(s) that, if found, cancel the wait.
-     * @param {number} [options.timeout=10000] The maximum time to wait for the button.
-     * @param {number} [options.preClickDelay=0] A cooldown in ms to wait before clicking.
+     * Waits for a clickable element and then clicks it.
+     * @param {string | (() => HTMLElement | null)} criteria The text to find or a function to find the element.
+     * @param {string | string[]} cancelText Text(s) that, if found, cancels the wait.
+     * @param {number} timeout The maximum time to wait.
+     * @param {number} [interval=50] The time in ms between checks.
      */
-    const robustClickAndVerify = async (buttonText, options = {}) => {
-        const { cancelText = null, timeout = 10000, preClickDelay = 0 } = options;
-        log(`Attempting robust click for: "${buttonText}"`);
-        
-        // Define a function to find the button. This will be reused.
-        const findButtonFn = () => {
-            const candidates = Array.from(document.querySelectorAll('[tabindex="0"]'))
-                .filter(el => el.textContent.includes(buttonText) && isVisible(el));
+    const waitForAndClick = async (criteria, cancelText, timeout = Infinity, interval = 50) => {
+        const conditionFn = typeof criteria === 'function'
+            ? criteria
+            // The position check (`top > 100`) was brittle and caused race conditions.
+            // isVisible() is a more reliable check for interactable elements.
+            : () => Array.from(document.querySelectorAll('[tabindex="0"]')).find(el =>
+                el.textContent.includes(criteria) && isVisible(el)
+            );
 
-            if (candidates.length === 0) return null;
-
-            // If multiple elements match, assume the most deeply nested one is the actual button.
-            // This avoids clicking a large container that also contains the button text, which was causing incorrect click coordinates.
-            let deepestElement = candidates[0];
-            let maxDepth = 0;
-
-            for (const el of candidates) {
-                let depth = 0;
-                let parent = el.parentElement;
-                while (parent) {
-                    depth++;
-                    parent = parent.parentElement;
-                }
-                if (depth > maxDepth) {
-                    maxDepth = depth;
-                    deepestElement = el;
-                }
-            }
-            return deepestElement;
-        };
-        
-        // 1. Wait for the button to appear and be visible.
-        const button = await waitForCondition(findButtonFn, timeout, 200, cancelText);
-
-        if (!button) {
-            log(`Button with text "${buttonText}" not found or wait was cancelled.`);
-            return false;
+        const button = await waitForCondition(conditionFn, timeout, interval, cancelText);
+        if (button) {
+            click(button);
         }
-
-        // 2. Add a small delay (cooldown) before clicking to ensure it's interactive.
-        if (preClickDelay > 0) {
-            log(`Found "${buttonText}", waiting ${preClickDelay}ms before clicking.`);
-            await sleep(preClickDelay);
-        }
-
-        // 3. Click and verify that the button disappears. Retry if it doesn't.
-        for (let i = 0; i < 5; i++) {
-            const freshButton = findButtonFn();
-            if (!freshButton) {
-                log(`"${buttonText}" disappeared before click attempt ${i + 1}. Success.`);
-                return true;
-            }
-            
-            click(freshButton);
-
-            // Wait for the button to disappear by checking if the find function returns null.
-            const disappeared = await waitForCondition(() => !findButtonFn(), 2000, 100);
-            if (disappeared) {
-                log(`Successfully clicked "${buttonText}" and it disappeared.`);
-                return true; // Success!
-            }
-            log(`Clicked "${buttonText}" but it didn't disappear. Retrying... (${i + 1}/5)`);
-            await sleep(500); // Wait before retrying
-        }
-        log(`Failed to verify click for "${buttonText}" after 3 attempts.`);
-        return false;
     };
 
-    // 1. Sequentially click the post-game buttons using the new robust logic.
-    await robustClickAndVerify('Continue', { cancelText: ['START GAME', 'Play again'] });
-    // "Play again" does not need a pre-click delay.
-    const playAgainSuccess = await robustClickAndVerify('Play again', { cancelText: 'INVENTORY', timeout: 120000 });
-
-    // If the "Play again" button isn't found or clicked successfully within the timeout,
-    // refresh the page as a recovery mechanism.
-    if (!playAgainSuccess) {
-        log("'Play again' button flow failed after 120s timeout. Refreshing page.");
-        location.reload();
-        return;
-    }
+    // 1. Sequentially find and click the post-game buttons.
+    // The first wait is cancelled if we are back in the lobby OR if the next button already appeared.
+    // We add timeouts to prevent the script from ever getting stuck.
+    await waitForAndClick('Continue', ['START GAME', 'Play again'], 10000);
+    await waitForAndClick('Play again', 'INVENTORY', 5000);
 
     // 2. Handle the optional "Are you sure you want to leave?" popup.
     const findOkButton = () => Array.from(document.querySelectorAll('[tabindex="0"]')).find(el => {
+        // This custom find function already has a position check, so it's unaffected by the change above.
         if (!el.textContent.includes('OK') || !isVisible(el) || el.getBoundingClientRect().top <= 100) return false;
         return Array.from(el.parentElement?.querySelectorAll('[tabindex="0"]') || []).some(sibling =>
             sibling !== el && sibling.textContent.includes('Cancel') && isVisible(sibling)
         );
     });
-
-    const okButton = await waitForCondition(findOkButton, 3000, 200);
-    if (okButton) {
-        log("Found 'OK' button in leave confirmation, clicking it.");
-        click(okButton);
-    }
-}
-
-/**
- * Handles the logic for the main home screen.
- * For now, just logs that the state has been detected.
- */
-async function handleHomeScreen() {
-    log("State handler called: HOME_SCREEN. Waiting up to 5s for potential rejoin popup...");
-
-    // Wait up to 5 seconds to see if the "rejoin" popup appears.
-    const rejoinPopupText = await waitForTextInDOM('Your game is still running', { timeout: 5000 });
-
-    if (rejoinPopupText) {
-        log("Rejoin popup detected. Attempting to click 'Join'.");
-        const joinButton = findDeepestClickableElementByText('Join');
-        if (joinButton) {
-            log(`Found clickable element for "Join":`, joinButton);
-            click(joinButton);
-            await sleep(500);
-        } else {
-            log("Could not find a clickable 'Join' button on the rejoin popup.");
-        }
-        return; // We've handled the action for this state.
-    }
-
-    // If the rejoin popup did not appear after the wait, proceed to click "PLAY".
-    log("No rejoin popup found. Attempting to click 'PLAY'.");
-    const playButton = findDeepestClickableElementByText('PLAY');
-    if (playButton) {
-        log(`Found clickable element for "PLAY":`, playButton);
-        click(playButton);
-        await sleep(500); // Give the UI a moment to transition
-    } else {
-        log(`Could not find a clickable element with text "PLAY".`);
-    }
-}
-
-/**
- * Handles the logic for the game selection screen.
- */
-async function handleGameScreen() {
-    log("State handler called: GAME_SCREEN. Attempting to click 'CUSTOM GAME'.");
-
-    // 1. Find and click the 'CUSTOM GAME' button first.
-    const customGameButton = findDeepestClickableElementByText('CUSTOM GAME');
-    if (!customGameButton) {
-        log(`Could not find a clickable element with text "CUSTOM GAME".`);
-        return;
-    }
-
-    log(`Found clickable element for "CUSTOM GAME":`, customGameButton);
-    click(customGameButton);
-    await sleep(500); // Give the UI a moment for the popup to potentially appear.
-
-    // 2. Now, check for the "fleeing" popup that might have appeared after the click.
-    const fleePopupText = 'Your previous game is still running';
-    const popupElement = await waitForTextInDOM(fleePopupText, { timeout: 2000 });
-
-    if (popupElement) {
-        log(`'${fleePopupText}' popup detected. Clicking 'Cancel'.`);
-        const cancelButton = findDeepestClickableElementByText('Cancel');
-        if (cancelButton) {
-            click(cancelButton);
-            await sleep(500);
-        } else {
-            log("Could not find a 'Cancel' button on the popup.");
-        }
-    }
-}
-
-async function customLobby() {
-    log("In Custom Lobby...");
-
-    // 1. Check for "Game has already started" popup.
-    const gameStartedText = 'This game cannot be joined because it has already started.';
-    if (findTextInDocument(gameStartedText)) {
-        log("'Game has already started' popup detected. Refreshing to find a new lobby.");
-        location.reload();
-        return; // Stop further actions in this cycle.
-    }
-
-    // 2. Look for a lobby with 'nt' in the title (case-insensitive).
-    const lobbyToJoin = Array.from(document.querySelectorAll('[tabindex="0"]')).find(el => {
-        if (!isVisible(el)) {
-            return false;
-        }
-
-        // Find the specific div for the lobby name.
-        // Based on the provided HTML, the lobby name has a distinct class.
-        // This is more reliable than checking the entire textContent of the lobby element.
-        const lobbyNameEl = el.querySelector('div.r-1b43r93');
-        if (!lobbyNameEl) {
-            return false;
-        }
-
-        // Use a case-insensitive regex to find "NT" or "nt" as a whole word.
-        return /\bNT\b/i.test(lobbyNameEl.textContent);
-    });
-
-    if (lobbyToJoin) {
-        log(`Found NT lobby: "${lobbyToJoin.textContent.trim()}". Clicking it.`);
-        click(lobbyToJoin);
-
-        const findJoinButton = () => Array.from(document.querySelectorAll('[tabindex="0"]'))
-                .find(el => el.textContent.includes('Join') && isVisible(el));
-
-        // After clicking the lobby, wait for the "Join" button to appear.
-        // The 'CREATE GAME' text is still visible behind the popup, so we can't use it as a cancel condition.
-        const joinButton = await waitForCondition(findJoinButton, 5000, 200);
-        
-        if (joinButton) {
-            // Verify it's an NT lobby by checking for the "Enable talismans" text.
-            if (findTextInDocument('Enable talismans')) {
-                log('Found "Join" button and "Enable talismans" text. Clicking Join.');
-                click(joinButton);
-                // Wait for the join button to disappear to prevent re-clicking the lobby.
-                const joined = await waitForCondition(() => !findJoinButton(), 5000, 100);
-                if (joined) {
-                    log('Successfully joined lobby, "Join" button is gone.');
-                } else {
-                    log('Clicked "Join", but it did not disappear. State might be stuck.');
-                }
-            } else {
-                log('"Join" button found, but "Enable talismans" text is missing. Not an NT lobby. Closing popup.');
-                // Attempt to find and click a close or cancel button.
-                const closeButton = Array.from(document.querySelectorAll('[tabindex="0"]'))
-                    .find(el => (el.textContent.toLowerCase() === 'cancel' || el.textContent.toLowerCase() === 'x') && isVisible(el));
-                
-                if (closeButton) {
-                    click(closeButton);
-                    await sleep(500); // Wait for the popup to close.
-                } else {
-                    log("Could not find a close/cancel button for the lobby popup. Will rely on next cycle to recover.");
-                }
-            }
-        } else {
-            log('"Join" button not found after clicking lobby.');
-        }
-        return; // Exit after attempting to join.
-    }
-    
-    log("No 'NT' lobby found or popup to dismiss.");
+    await waitForAndClick(findOkButton, null, 3000);
 }
 
 // --- Main Bot Loop & Control ---
@@ -1145,33 +892,33 @@ async function customLobby() {
  * @param {string} myName The active player's name.
  */
 async function main(myName) {
-    const currentState = determineGameState();
-    log(`State check: ${currentState}`);
+    const pageText = document.body.innerText;
 
-    switch (currentState) {
-        case GameState.LOBBY:
-            await handleLobbyState();
-            break;
-        case GameState.ROLE_SELECTION:
-            await handleRoleSelectionState();
-            break;
-        case GameState.IN_GAME:
-            await inGame(myName);
-            break;
-        case GameState.POST_GAME:
-            await playAgain();
-            break;
-        case GameState.CUSTOM:
-            await customLobby();
-            break;
-        case GameState.HOME_SCREEN:
-            await handleHomeScreen();
-            break;
-        case GameState.GAME_SCREEN:
-            await handleGameScreen();
-            break;
-        case GameState.UNKNOWN:
-            break;
+    // In lobby or waiting
+    if (pageText.includes('MORE PLAYERS REQUIRED') || pageText.includes('START GAME')) {
+        const startGameButton = Array.from(document.querySelectorAll('[tabindex="0"]')).find(el =>
+            el.textContent.includes('START GAME') && isVisible(el) && el.getBoundingClientRect().top > 100
+        );
+        if (startGameButton) {
+            click(startGameButton);
+        }
+    }
+
+    // Special role selection (e.g., Instigator)
+    if (pageText.includes('SELECT A ROLE') || pageText.includes('Team: You belong to')) {
+        if (findImageInDocument('instigator')) {
+            return clickInnermostElementByImage('cupid');
+        }
+    }
+
+    // Game has ended
+    if (pageText.includes('Continue')) {
+        return await playAgain();
+    }
+
+    // Game is in progress
+    if ((pageText.includes('Welcome to the werewolves chat.') || pageText.includes('Voting')) && !gameIsOver()) {
+        await inGame(myName);
     }
 }
 
@@ -1196,7 +943,7 @@ function startBot(name) {
             console.error('[Λbstract] main() error:', error); // Keep errors visible
         } finally {
             if (BOT_RUNNING) {
-                loopHandle = setTimeout(loop, 1500); // Check game state more frequently.
+                loopHandle = setTimeout(loop, 500); // Check game state more frequently.
             }
         }
     }
@@ -1279,23 +1026,3 @@ if (document.readyState === 'loading') {
 } else {
     grantConsoleAccess();
 }
-
-// --- Auto-start on page load ---
-// Checks the stored state when the content script is loaded. If the bot was
-// previously enabled, it will start automatically without needing the popup.
-(function() {
-    const STORAGE_KEY_STATE = 'abstract_state';
-    const STORAGE_KEY_NAME = 'abstract_name';
-
-    chrome.storage.local.get([STORAGE_KEY_STATE, STORAGE_KEY_NAME], (storage) => {
-        const isRunning = storage[STORAGE_KEY_STATE] || false;
-        const name = storage[STORAGE_KEY_NAME] || 'Player'; // Default name if not set
-
-        if (isRunning) {
-            log('Bot state is ENABLED. Auto-starting on page load.');
-            startBot(name);
-        } else {
-            log('Bot state is DISABLED. Waiting for user to enable.');
-        }
-    });
-})();

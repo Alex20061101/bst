@@ -365,32 +365,6 @@ function clickOutermostElement(container) {
     click(outermostElement);
 }
 
-/**
- * Finds the most deeply nested, visible, and enabled clickable element containing specific text.
- * This is useful for buttons that might not be standard elements but have a role or tabindex.
- * @param {string} text The text to search for.
- * @returns {HTMLElement | null} The found element or null.
- */
-function findDeepestClickableElementByText(text) {
-    const selector = '[tabindex="0"], button, [role="button"]';
-    const candidates = Array.from(document.querySelectorAll(selector))
-        .filter(el => el.textContent.includes(text) && isVisible(el) && !el.disabled);
-
-    if (candidates.length === 0) {
-        return null;
-    }
-
-    if (candidates.length === 1) {
-        return candidates[0];
-    }
-
-    // Find the most deeply nested element to avoid clicking a container that also contains the text.
-    return candidates.reduce((deepest, current) => {
-        const getDepth = (e) => { let d = 0; while (e.parentElement) { d++; e = e.parentElement; } return d; };
-        return getDepth(current) > getDepth(deepest) ? current : deepest;
-    });
-}
-
 // --- Game State Parsing Functions ---
 
 /**
@@ -1001,66 +975,54 @@ async function playAgain() {
  * For now, just logs that the state has been detected.
  */
 async function handleHomeScreen() {
-    log("State handler called: HOME_SCREEN. Waiting up to 5s for potential rejoin popup...");
+    log("State handler called: HOME_SCREEN. Attempting to click 'PLAY'.");
+    const textToFind = 'PLAY';
 
-    // Wait up to 5 seconds to see if the "rejoin" popup appears.
-    const rejoinPopupText = await waitForTextInDOM('Your game is still running', { timeout: 5000 });
+    // The home screen "PLAY" button may not be a standard `tabindex="0"` element.
+    // This logic is more robust, searching for buttons or elements with a button role.
+    const selector = '[tabindex="0"], button, [role="button"]';
+    const candidates = Array.from(document.querySelectorAll(selector))
+        .filter(el => el.textContent.includes(textToFind) && isVisible(el) && !el.disabled);
 
-    if (rejoinPopupText) {
-        log("Rejoin popup detected. Attempting to click 'Join'.");
-        const joinButton = findDeepestClickableElementByText('Join');
-        if (joinButton) {
-            log(`Found clickable element for "Join":`, joinButton);
-            click(joinButton);
-            await sleep(500);
-        } else {
-            log("Could not find a clickable 'Join' button on the rejoin popup.");
-        }
-        return; // We've handled the action for this state.
-    }
+    if (candidates.length > 0) {
+        // Find the most deeply nested element to avoid clicking a container that also contains the text.
+        const deepestElement = candidates.reduce((deepest, current) => {
+            const getDepth = (e) => { let d = 0; while(e.parentElement) { d++; e = e.parentElement; } return d; };
+            return getDepth(current) > getDepth(deepest) ? current : deepest;
+        });
 
-    // If the rejoin popup did not appear after the wait, proceed to click "PLAY".
-    log("No rejoin popup found. Attempting to click 'PLAY'.");
-    const playButton = findDeepestClickableElementByText('PLAY');
-    if (playButton) {
-        log(`Found clickable element for "PLAY":`, playButton);
-        click(playButton);
+        log(`Found deepest clickable element for "${textToFind}":`, deepestElement);
+        click(deepestElement);
         await sleep(500); // Give the UI a moment to transition
     } else {
-        log(`Could not find a clickable element with text "PLAY".`);
+        log(`Could not find a clickable element with text "${textToFind}".`);
     }
 }
 
 /**
  * Handles the logic for the game selection screen.
+ * For now, just logs that the state has been detected.
  */
 async function handleGameScreen() {
     log("State handler called: GAME_SCREEN. Attempting to click 'CUSTOM GAME'.");
+    const textToFind = 'CUSTOM GAME';
 
-    // 1. Find and click the 'CUSTOM GAME' button first.
-    const customGameButton = findDeepestClickableElementByText('CUSTOM GAME');
-    if (!customGameButton) {
-        log(`Could not find a clickable element with text "CUSTOM GAME".`);
-        return;
-    }
+    // Using the same robust logic as handleHomeScreen to find the button.
+    const selector = '[tabindex="0"], button, [role="button"]';
+    const candidates = Array.from(document.querySelectorAll(selector))
+        .filter(el => el.textContent.includes(textToFind) && isVisible(el) && !el.disabled);
 
-    log(`Found clickable element for "CUSTOM GAME":`, customGameButton);
-    click(customGameButton);
-    await sleep(500); // Give the UI a moment for the popup to potentially appear.
+    if (candidates.length > 0) {
+        const deepestElement = candidates.reduce((deepest, current) => {
+            const getDepth = (e) => { let d = 0; while(e.parentElement) { d++; e = e.parentElement; } return d; };
+            return getDepth(current) > getDepth(deepest) ? current : deepest;
+        });
 
-    // 2. Now, check for the "fleeing" popup that might have appeared after the click.
-    const fleePopupText = 'Your previous game is still running';
-    const popupElement = await waitForTextInDOM(fleePopupText, { timeout: 2000 });
-
-    if (popupElement) {
-        log(`'${fleePopupText}' popup detected. Clicking 'Cancel'.`);
-        const cancelButton = findDeepestClickableElementByText('Cancel');
-        if (cancelButton) {
-            click(cancelButton);
-            await sleep(500);
-        } else {
-            log("Could not find a 'Cancel' button on the popup.");
-        }
+        log(`Found deepest clickable element for "${textToFind}":`, deepestElement);
+        click(deepestElement);
+        await sleep(500); // Give the UI a moment to transition
+    } else {
+        log(`Could not find a clickable element with text "${textToFind}".`);
     }
 }
 
