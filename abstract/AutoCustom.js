@@ -901,7 +901,7 @@ async function playAgain() {
      * @param {number} [options.preClickDelay=0] A cooldown in ms to wait before clicking.
      */
     const robustClickAndVerify = async (buttonText, options = {}) => {
-        const { cancelText = null, timeout = 10000, preClickDelay = 0 } = options;
+        const { cancelText = null, timeout = 10000, preClickDelay = 200 } = options;
         log(`Attempting robust click for: "${buttonText}"`);
         
         // Define a function to find the button. This will be reused.
@@ -1004,7 +1004,7 @@ async function handleHomeScreen() {
     log("State handler called: HOME_SCREEN. Waiting up to 5s for potential rejoin popup...");
 
     // Wait up to 5 seconds to see if the "rejoin" popup appears.
-    const rejoinPopupText = await waitForTextInDOM('Your game is still running', { timeout: 5000 });
+    const rejoinPopupText = await waitForTextInDOM('Your game is still running', { timeout: 3000 });
 
     if (rejoinPopupText) {
         log("Rejoin popup detected. Attempting to click 'Join'.");
@@ -1025,7 +1025,7 @@ async function handleHomeScreen() {
     if (playButton) {
         log(`Found clickable element for "PLAY":`, playButton);
         click(playButton);
-        await sleep(500); // Give the UI a moment to transition
+        await sleep(3000); // Give the UI a moment to transition
     } else {
         log(`Could not find a clickable element with text "PLAY".`);
     }
@@ -1070,8 +1070,12 @@ async function customLobby() {
     // 1. Check for "Game has already started" popup.
     const gameStartedText = 'This game cannot be joined because it has already started.';
     if (findTextInDocument(gameStartedText)) {
-        log("'Game has already started' popup detected. Refreshing to find a new lobby.");
-        location.reload();
+        log("'Game has already started' popup detected. Clicking 'OK'.");
+        const okButton = findDeepestClickableElementByText('OK');
+        if (okButton) {
+            click(okButton);
+            await sleep(500); // Wait for popup to close
+        }
         return; // Stop further actions in this cycle.
     }
 
