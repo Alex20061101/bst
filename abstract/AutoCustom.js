@@ -768,6 +768,17 @@ async function inGameNight(playerInfo, coupleElements, allPlayerElements) {
  * Handles the logic for the game lobby (e.g., clicking "START GAME").
  */
 async function handleLobbyState() {
+    // 1. Check for "MORE PLAYERS REQUIRED" button and refresh if found.
+    const morePlayersButton = Array.from(document.querySelectorAll('[tabindex="0"]')).find(el =>
+        el.textContent.includes('MORE PLAYERS REQUIRED') && isVisible(el)
+    );
+
+    if (morePlayersButton) {
+        log("'MORE PLAYERS REQUIRED' button found. Refreshing page to find a new lobby.");
+        location.reload();
+        return; // Stop further actions in this cycle.
+    }
+
     // The brittle position check (`.top > 100`) was removed in favor of the more reliable isVisible().
     const startGameButton = Array.from(document.querySelectorAll('[tabindex="0"]')).find(el =>
         el.textContent.includes('START GAME') && isVisible(el)
@@ -817,7 +828,7 @@ function determineGameState() {
     }
     // 4. The lobby is the "default" waiting state. This check is now simple because
     // the more specific menu states have already been ruled out.
-    if ((pageText.includes('MORE PLAYERS REQUIRED') || pageText.includes('START GAME')) && pageText.includes('INVITE')) {
+    if (pageText.includes('START GAME') && pageText.includes('INVITE')) {
         return GameState.LOBBY;
     }
 
