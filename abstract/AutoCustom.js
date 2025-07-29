@@ -370,12 +370,14 @@ function clickOutermostElement(container) {
  * This is useful for buttons that might not be standard elements but have a role or tabindex.
  * @param {string} text The text to search for.
  * @returns {HTMLElement | null} The found element or null.
+ * @param {object} [options]
+ * @param {string | null} [options.exclude=null] Text to exclude from the element's content.
  */
-function findDeepestClickableElementByText(text) {
+function findDeepestClickableElementByText(text, { exclude = null } = {}) {
     const selector = '[tabindex="0"], button, [role="button"]';
     const candidates = Array.from(document.querySelectorAll(selector))
-        .filter(el => el.textContent.includes(text) && isVisible(el) && !el.disabled);
-
+        .filter(el => isVisible(el) && !el.disabled && el.textContent.includes(text) && !(exclude && el.textContent.includes(exclude)));
+        
     if (candidates.length === 0) {
         return null;
     }
@@ -1021,7 +1023,7 @@ async function handleHomeScreen() {
 
     // If the rejoin popup did not appear after the wait, proceed to click "PLAY".
     log("No rejoin popup found. Attempting to click 'PLAY'.");
-    const playButton = findDeepestClickableElementByText('PLAY');
+    const playButton = findDeepestClickableElementByText('PLAY', { exclude: 'FRIENDS' });
     if (playButton) {
         log(`Found clickable element for "PLAY":`, playButton);
         click(playButton);
