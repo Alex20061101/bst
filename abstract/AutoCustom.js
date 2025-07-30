@@ -37,8 +37,13 @@ let clickDebugger = null;
  * @param {HTMLElement} element The element to click.
  * @param {string} [button='left'] The mouse button to simulate.
  */
-function click(element, button = 'left') {
+async function click(element, button = 'left') {
     const rect = element.getBoundingClientRect();
+    // Check if the element is off-screen or has no size
+    if (rect.width === 0 || rect.height === 0) {
+        log(`Click skipped: Element has no dimensions or is not on screen.`, element);
+        return;
+    }
     const x = rect.left + rect.width / 2;
     const y = rect.top + rect.height / 2;
 
@@ -46,12 +51,21 @@ function click(element, button = 'left') {
     showClickAt(x, y);
 
     log(`Request click @ ${x}, ${y} → ${element.textContent.trim()}`);
-    chrome.runtime.sendMessage({ action: 'performClick', x, y, button }, response => {
-        if (chrome.runtime.lastError) {
-            console.error(`[Λbstract] sendMessage error: ${chrome.runtime.lastError.message}`); // Keep errors visible
-        } else {
-            log('BG responded:', response);
-        }
+    
+    return new Promise((resolve, reject) => {
+        chrome.runtime.sendMessage({ action: 'performClick', x, y, button }, response => {
+            if (chrome.runtime.lastError) {
+                console.error(`[Λbstract] sendMessage error: ${chrome.runtime.lastError.message}`);
+                return reject(new Error(chrome.runtime.lastError.message));
+            }
+            if (response && response.ok) {
+                log('BG responded:', response);
+                resolve(response);
+            } else {
+                log('BG responded with an error:', response);
+                reject(new Error(response?.error || 'Unknown error during click'));
+            }
+        });
     });
 }
 
@@ -770,7 +784,7 @@ async function inGameNight(playerInfo, coupleElements, allPlayerElements) {
 async function handleLobbyState() {
     // 1. Check for "MORE PLAYERS REQUIRED" button and refresh if found.
     const morePlayersButton = Array.from(document.querySelectorAll('[tabindex="0"]')).find(el =>
-        el.textContent.includes('MORE PLAYERS REQUIRED') && isVisible(el)
+        el.textContent.includes('MORE PLAYERS REQUIRED')
     );
 
     if (morePlayersButton) {
@@ -1086,7 +1100,7 @@ async function customLobby() {
         log("'Game has already started' popup detected. Clicking 'OK'.");
         const okButton = findDeepestClickableElementByText('OK');
         if (okButton) {
-            click(okButton);
+            await click(okButton);
             await sleep(500); // Wait for popup to close
         }
         return; // Stop further actions in this cycle.
@@ -1112,7 +1126,7 @@ async function customLobby() {
 
     if (lobbyToJoin) {
         log(`Found NT lobby: "${lobbyToJoin.textContent.trim()}". Clicking it.`);
-        click(lobbyToJoin);
+        await click(lobbyToJoin);
 
         const findJoinButton = () => Array.from(document.querySelectorAll('[tabindex="0"]'))
                 .find(el => el.textContent.includes('Join') && isVisible(el));
@@ -1125,7 +1139,7 @@ async function customLobby() {
             // Verify it's an NT lobby by checking for the "Enable talismans" text.
             if (findTextInDocument('Enable talismans')) {
                 log('Found "Join" button and "Enable talismans" text. Clicking Join.');
-                click(joinButton);
+                await click(joinButton);
                 // Wait for the join button to disappear to prevent re-clicking the lobby.
                 const joined = await waitForCondition(() => !findJoinButton(), 5000, 100);
                 if (joined) {
@@ -1140,7 +1154,7 @@ async function customLobby() {
                     .find(el => (el.textContent.toLowerCase() === 'cancel' || el.textContent.toLowerCase() === 'x') && isVisible(el));
                 
                 if (closeButton) {
-                    click(closeButton);
+                    await click(closeButton);
                     await sleep(500); // Wait for the popup to close.
                 } else {
                     log("Could not find a close/cancel button for the lobby popup. Will rely on next cycle to recover.");
@@ -1164,6 +1178,25 @@ async function customLobby() {
 async function main(myName) {
     const currentState = determineGameState();
     log(`State check: ${currentState}`);
+
+    // Timeout logic for being stuck in the lobby
+    if (currentState === GameState.LOBBY) {
+        if (lobbyEntryTimestamp === null) {
+            lobbyEntryTimestamp = Date.now();
+            log(`Entered LOBBY state. Starting 2-minute timeout.`);
+        } else {
+            const timeInLobby = Date.now() - lobbyEntryTimestamp;
+            if (timeInLobby > LOBBY_TIMEOUT) {
+                log(`Stuck in LOBBY state for more than ${LOBBY_TIMEOUT / 1000 / 60} minutes. Reloading page.`);
+                location.reload();
+                return; // Stop execution to allow the page to reload
+            }
+        }
+    } else {
+        // Reset the timestamp if we are no longer in the lobby
+        if (lobbyEntryTimestamp) log(`Exited LOBBY state. Resetting timeout.`);
+        lobbyEntryTimestamp = null;
+    }
 
     switch (currentState) {
         case GameState.LOBBY:
@@ -1196,6 +1229,8 @@ async function main(myName) {
 let BOT_RUNNING = false;
 let ACTIVE_NAME = '';
 let loopHandle = null;
+let lobbyEntryTimestamp = null;
+const LOBBY_TIMEOUT = 2 * 60 * 1000; // 2 minutes in milliseconds
 
 /** Starts the main bot loop. */
 function startBot(name) {
