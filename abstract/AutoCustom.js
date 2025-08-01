@@ -55,7 +55,8 @@ async function click(element, button = 'left') {
     return new Promise((resolve, reject) => {
         chrome.runtime.sendMessage({ action: 'performClick', x, y, button }, response => {
             if (chrome.runtime.lastError) {
-                console.error(`[Λbstract] sendMessage error: ${chrome.runtime.lastError.message}`);
+
+                console.error(`[Λbstract sendMessage error: ${chrome.runtime.lastError.message}`);
                 return reject(new Error(chrome.runtime.lastError.message));
             }
             if (response && response.ok) {
@@ -380,6 +381,30 @@ function clickOutermostElement(container) {
 }
 
 /**
+ * Types a message into the chat box and sends it with human-like delays.
+ * @param {string} message The message to send.
+ */
+async function sendMessage(message) {
+    const chatInput = document.querySelector('textarea');
+    if (!chatInput) {
+        log('Could not find chat input to send message.');
+        return;
+    }
+    const valueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+    valueSetter.call(chatInput, message);
+    chatInput.dispatchEvent(new Event('input', { bubbles: true }));
+    chatInput.dispatchEvent(new Event('change', { bubbles: true }));
+
+    // Cooldown to simulate a human pause between typing and sending.
+    await sleep(300);
+
+    clickElementByImage(/.*icon_send.*\.png/);
+
+    // Cooldown after sending to allow UI to update and prevent double-sends.
+    await sleep(500);
+}
+
+/**
  * Finds the most deeply nested, visible, and enabled clickable element containing specific text.
  * This is useful for buttons that might not be standard elements but have a role or tabindex.
  * @param {string} text The text to search for.
@@ -590,35 +615,39 @@ async function inGameDay(playerInfo, coupleElements, playerImages, allPlayerElem
     log(`inGameDay(): role = ${playerInfo.role} | Lovers = ${coupleElements.map(c => c?.textContent.trim())}`);
 
     const isWolfCoupled = WOLF_ROLES.has(playerInfo.coupleRole1) || WOLF_ROLES.has(playerInfo.coupleRole2);
+    const isSelfWolf = WOLF_ROLES.has(playerInfo.role);
 
-    if (!isWolfCoupled) {
-        // Logic for when not coupled with a wolf
-        if (WOLF_ROLES.has(playerInfo.role)) {
-            // I am a wolf, not coupled with a wolf. Maybe send a message.
-            const messages = getMessages();
-            const mentionedNumbers = messages?.flatMap(msg => msg.match(/\b\d{1,2}\b/g) || []);
-            if (mentionedNumbers?.some(num => num == playerInfo.number)) {
-                return; // My number was mentioned, do nothing.
-            }
+    // --- Universal Lover Logic ---
+    // If anyone is coupled with a wolf, they should vote for that wolf to speed up the game.
+    // This is the primary XP farming strategy for coupled players.
+    if (isWolfCoupled) {
+        // Find the element of the lover who is a wolf.
+        const wolfLoverElement = WOLF_ROLES.has(playerInfo.coupleRole1) ? coupleElements[0] : coupleElements[1];
+        if (wolfLoverElement) {
+            log(`Voting for wolf lover (${playerInfo.role}): ${wolfLoverElement.textContent.trim()}`);
+            clickOutermostElement(wolfLoverElement);
+        }
+    }
 
-            if (gameIsOver()) return;
-            log('Wolf sending number:', playerInfo.number);
-            const chatInput = document.querySelector('textarea');
-            const valueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
-            valueSetter.call(chatInput, playerInfo.number);
-            chatInput.dispatchEvent(new Event('input', { bubbles: true }));
-            chatInput.dispatchEvent(new Event('change', { bubbles: true }));
-            clickElementByImage(/.*icon_send.*\.png/);
-            await sleep(500);
-        } else {
-            // I am a villager, not coupled with a wolf. Use special abilities.
-            const abilities = {
-                'Priest': { triggerRegex: /.*priest_holy_water.*\.png/, actionRegex: /.*priest_holy_water.*\.png/ },
-                'Shooter': { triggerRegex: /.*gunner_bullet.*\.png/, actionRegex: /.*gunner_voting_shoot.*\.png/ }
-            };
-            const ability = abilities[playerInfo.role];
-            if (!ability) return;
-
+    // --- Wolf Logic ---
+    if (isSelfWolf) {
+        // ACTION: Always send my number to out myself for XP farming.
+        const messages = getMessages();
+        const mentionedNumbers = messages?.flatMap(msg => (msg.match(/\b\d{1,2}\b/g) || []));
+        if (!mentionedNumbers?.some(num => num == playerInfo.number)) {
+            log('Wolf sending own number:', playerInfo.number);
+            await sendMessage(playerInfo.number);
+        }
+    } 
+    // --- Villager Logic ---
+    else {
+        // ACTION: Use special abilities (Priest/Shooter) on the most-voted player.
+        const abilities = {
+            'Priest': { triggerRegex: /.*priest_holy_water.*\.png/, actionRegex: /.*priest_holy_water.*\.png/ },
+            'Shooter': { triggerRegex: /.*gunner_bullet.*\.png/, actionRegex: /.*gunner_voting_shoot.*\.png/ }
+        };
+        const ability = abilities[playerInfo.role];
+        if (ability) {
             await waitForImageInDOM('vote_day_selected', { timeout: 90000, cancelText: 'Continue' });
             if (gameIsOver()) return;
 
@@ -630,27 +659,6 @@ async function inGameDay(playerInfo, coupleElements, playerImages, allPlayerElem
             if (votedPlayer) {
                 clickElementByImageInElement(votedPlayer, ability.actionRegex);
             }
-        }
-    } else {
-        // Logic for when I or my partner is a wolf (or I'm coupled with one)
-        const alreadyVotedForCouple = playerImages.some(imgSet => imgSet.some(img => img.includes('cupid')));
-        if (!alreadyVotedForCouple) {
-            const targetLover = WOLF_ROLES.has(playerInfo.coupleRole1) ? coupleElements[0] : coupleElements[1];
-            log('Voting couple:', targetLover.textContent.trim());
-            clickOutermostElement(targetLover);
-        }
-
-        if (playerInfo.role === 'Priest') {
-            log('Role ability triggered:', playerInfo.role);
-            clickElementByImage(/.*priest_holy_water.*\.png/);
-            setTimeout(() => {
-                const votedPlayer = allPlayerElements.find(p => findImageInElement(p, /.*priest_holy_water.*\.png/));
-                if (votedPlayer) {
-                    clickElementByImageInElement(votedPlayer, /.*priest_holy_water.*\.png/);
-                }
-            }, 200);
-        } else if (playerInfo.role === 'Shooter') {
-            await shooterAction(playerInfo, coupleElements, allPlayerElements);
         }
     }
 }
@@ -668,15 +676,8 @@ async function inGameNight(playerInfo, coupleElements, allPlayerElements) {
     // --- Night Helper Functions ---
     const sendMessageAndAct = async (message, targetElement) => {
         if (gameIsOver()) return;
-        log(`sendAction: ${message} | Target: ${targetElement?.textContent.trim()}`);
-        const chatInput = document.querySelector('textarea');
-        const valueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
-        valueSetter.call(chatInput, message);
-        chatInput.dispatchEvent(new Event('input', { bubbles: true }));
-        chatInput.dispatchEvent(new Event('change', { bubbles: true }));
-        clickElementByImage(/.*icon_send.*\.png/);
-        await sleep(500);
-
+        log(`sendAction: ${message} | Target: ${targetElement?.textContent.trim()}`);        
+        await sendMessage(message);
         if (targetElement) {
             const isNotPriestCoupled = playerInfo.coupleRole1 !== 'Priest' && playerInfo.coupleRole2 !== 'Priest';
             if (isNotPriestCoupled || playerInfo.role === 'Junior Werewolf') {
@@ -705,23 +706,29 @@ async function inGameNight(playerInfo, coupleElements, allPlayerElements) {
 
         clickElementByImage(selectionMarkerRegex);
 
-        setTimeout(() => {
+        // Wait for the UI to update after clicking the tag icon, then perform the tag.
+        // Using an awaited async IIFE is more reliable than a simple setTimeout.
+        await (async () => {
+            await sleep(500); // Cooldown between clicking the ability and clicking the player.
             const chatMessages = getMessages();
             const nonLoverNumbers = [playerInfo.number, playerInfo.coupleNumber1, playerInfo.coupleNumber2];
             const taggedNumber = chatMessages
                 ?.flatMap(msg => (msg.match(/\b\d{1,2}\b/g) || []))
                 .filter(num => !nonLoverNumbers.includes(num))[0];
 
-            if (!taggedNumber) return;
+            if (!taggedNumber) return; // No valid target found in chat
             log('Target number chosen:', taggedNumber);
+            
             const targetPlayerElement = allPlayerElements[parseInt(taggedNumber, 10) - 1];
+            if (!targetPlayerElement) return;
+
             const targetImage = [...targetPlayerElement.querySelectorAll('img')].find(img => selectionMarkerRegex.test(img.src));
             const clickableButton = targetImage?.closest('[tabindex="0"]:not([disabled])');
 
             if (clickableButton) {
                 click(clickableButton);
             }
-        }, 200);
+        })();
 
         await waitForTextInDOM('Voting', { cancelText: 'Continue' });
     };
@@ -747,30 +754,9 @@ async function inGameNight(playerInfo, coupleElements, allPlayerElements) {
         await waitForExactText('5s', { cancelText: 'Continue' });
         if (gameIsOver() || findTextInDocument('Voting')) return;
 
-        // Complex logic to avoid voting for Junior Werewolf
-        for (const playerElement of allPlayerElements) {
-            const images = playerElement.querySelectorAll('img');
-            let roleImage = '';
-            for (let i = images.length - 1; i >= 0; i--) {
-                const src = images[i].src;
-                if (src.includes('vote_day') || src.includes('vote_werewolves') || src.includes('hand-skin')) continue;
-                roleImage = src.slice(src.lastIndexOf('/') + 1);
-                break;
-            }
-            if (roleImage && getPlayerRole(roleImage) === 'Junior Werewolf') {
-                // This player is the Junior Werewolf, check if they are the target
-                for (const img of images) {
-                    if (img.src.includes('vote_werewolves_voter')) {
-                        if (!isPriestCoupled) {
-                            clickOutermostElement(partnerElement); // Re-click my partner
-                        }
-                        break;
-                    }
-                }
-            }
-        }
-        await waitForTextInDOM('Voting', { cancelText: 'Continue' });
+        await protectJuniorWerewolf(allPlayerElements, partnerElement, isPriestCoupled);
 
+        await waitForTextInDOM('Voting', { cancelText: 'Continue' });
     } else if (playerInfo.role === 'Junior Werewolf') {
         await handleWolfTagging(/.*junior_werewolf_selection_marker.*\.png/);
     } else if (playerInfo.role === 'Split Wolf') {
@@ -911,6 +897,41 @@ async function inGame(myName) {
     }
 }
 
+/**
+ * Extracts the primary role image filename from a player element's list of images.
+ * It iterates backwards to find the most foundational role image, ignoring transient UI overlays.
+ * @param {NodeListOf<HTMLImageElement>} images - A list of image elements from a player container.
+ * @returns {string} The filename of the role image, or an empty string if not found.
+ */
+function getRoleImageFromImages(images) {
+    for (let i = images.length - 1; i >= 0; i--) {
+        const src = images[i].src;
+        // Ignore transient/UI images to find the underlying role image
+        if (src.includes('vote_day') || src.includes('vote_werewolves') || src.includes('hand-skin')) {
+            continue;
+        }
+        return src.slice(src.lastIndexOf('/') + 1);
+    }
+    return '';
+}
+
+/**
+ * Checks if the currently voted werewolf target is a Junior Werewolf and, if so, changes the vote.
+ * This is a protective measure for the wolf team.
+ * @param {HTMLElement[]} allPlayerElements - Array of all player elements.
+ * @param {HTMLElement} partnerElement - The element of the bot's lover to vote for as a fallback.
+ * @param {boolean} isPriestCoupled - Whether the bot is coupled with a priest (a high-value target).
+ */
+async function protectJuniorWerewolf(allPlayerElements, partnerElement, isPriestCoupled) {
+    const votedPlayer = allPlayerElements.find(p => findImageInElement(p, /vote_werewolves_voter/));
+    if (!votedPlayer) return;
+
+    const roleImage = getRoleImageFromImages(votedPlayer.querySelectorAll('img'));
+    if (roleImage && getPlayerRole(roleImage) === 'Junior Werewolf' && !isPriestCoupled) {
+        log('Protecting Junior Werewolf by changing vote.');
+        clickOutermostElement(partnerElement);
+    }
+}
 
 /**
  * Handles the logic for post-game screens.
@@ -998,7 +1019,7 @@ async function playAgain() {
     // 1. Sequentially click the post-game buttons using the new robust logic.
     await robustClickAndVerify('Continue', { cancelText: ['START GAME', 'Play again'] });
     // "Play again" does not need a pre-click delay.
-    const playAgainSuccess = await robustClickAndVerify('Play again', { cancelText: 'INVENTORY', timeout: 120000 });
+    const playAgainSuccess = await robustClickAndVerify('Play again', { cancelText: 'INVENTORY', timeout: 60000 });
 
     // If the "Play again" button isn't found or clicked successfully within the timeout,
     // refresh the page as a recovery mechanism.
@@ -1197,6 +1218,25 @@ async function main(myName) {
         if (lobbyEntryTimestamp) log(`Exited LOBBY state. Resetting timeout.`);
         lobbyEntryTimestamp = null;
     }
+    
+    // Timeout logic for being stuck in UNKNOWN state
+    if (currentState === GameState.UNKNOWN) {
+        if (unknownStateEntryTimestamp === null) {
+            unknownStateEntryTimestamp = Date.now();
+            log(`Entered UNKNOWN state. Starting 2-minute timeout.`);
+        } else {
+            const timeInUnknown = Date.now() - unknownStateEntryTimestamp;
+            if (timeInUnknown > LOBBY_TIMEOUT) {
+                log(`Stuck in UNKNOWN state for more than ${LOBBY_TIMEOUT / 1000 / 60} minutes. Reloading page.`);
+                location.reload();
+                return; // Stop execution to allow the page to reload
+            }
+        }
+    } else {
+        // Reset the timestamp if we are no longer in the UNKNOWN state
+        if (unknownStateEntryTimestamp) log(`Exited UNKNOWN state. Resetting timeout.`);
+        unknownStateEntryTimestamp = null;
+    }
 
     switch (currentState) {
         case GameState.LOBBY:
@@ -1230,6 +1270,7 @@ let BOT_RUNNING = false;
 let ACTIVE_NAME = '';
 let loopHandle = null;
 let lobbyEntryTimestamp = null;
+let unknownStateEntryTimestamp = null;
 const LOBBY_TIMEOUT = 2 * 60 * 1000; // 2 minutes in milliseconds
 
 /** Starts the main bot loop. */
