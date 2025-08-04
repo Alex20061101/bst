@@ -621,11 +621,18 @@ async function inGameDay(playerInfo, coupleElements, playerImages, allPlayerElem
     // If anyone is coupled with a wolf, they should vote for that wolf to speed up the game.
     // This is the primary XP farming strategy for coupled players.
     if (isWolfCoupled) {
-        // Find the element of the lover who is a wolf.
-        const wolfLoverElement = WOLF_ROLES.has(playerInfo.coupleRole1) ? coupleElements[0] : coupleElements[1];
-        if (wolfLoverElement) {
-            log(`Voting for wolf lover (${playerInfo.role}): ${wolfLoverElement.textContent.trim()}`);
-            clickOutermostElement(wolfLoverElement);
+        // Check if a vote has already been cast by looking for the vote marker on self.
+        const alreadyVoted = playerImages.flat().some(img => img.includes('vote_day'));
+
+        if (alreadyVoted) {
+            log('Already voted, skipping lover vote.');
+        } else {
+            // Find the element of the lover who is a wolf.
+            const wolfLoverElement = WOLF_ROLES.has(playerInfo.coupleRole1) ? coupleElements[0] : coupleElements[1];
+            if (wolfLoverElement) {
+                log(`Voting for wolf lover (${playerInfo.role}): ${wolfLoverElement.textContent.trim()}`);
+                clickOutermostElement(wolfLoverElement);
+            }
         }
     }
 
@@ -641,23 +648,74 @@ async function inGameDay(playerInfo, coupleElements, playerImages, allPlayerElem
     } 
     // --- Villager Logic ---
     else {
-        // ACTION: Use special abilities (Priest/Shooter) on the most-voted player.
-        const abilities = {
-            'Priest': { triggerRegex: /.*priest_holy_water.*\.png/, actionRegex: /.*priest_holy_water.*\.png/ },
-            'Shooter': { triggerRegex: /.*gunner_bullet.*\.png/, actionRegex: /.*gunner_voting_shoot.*\.png/ }
-        };
-        const ability = abilities[playerInfo.role];
-        if (ability) {
-            await waitForImageInDOM('vote_day_selected', { timeout: 90000, cancelText: 'Continue' });
-            if (gameIsOver()) return;
+        // --- Priest Logic ---
+        if (playerInfo.role === 'Priest') {
+            const holyWaterIcon = document.querySelector('img[src*="priest_holy_water"]');
+            const clickableIcon = holyWaterIcon?.closest('[tabindex="0"]:not([disabled])');
 
-            log('Role ability triggered:', playerInfo.role);
-            clickElementByImage(ability.triggerRegex);
-            await sleep(200);
+            // Only act if the ability is available
+            if (!clickableIcon || !isVisible(clickableIcon)) {
+                return;
+            }
 
-            const votedPlayer = allPlayerElements.find(p => findImageInElement(p, /.*vote_day_selected.*\.png/));
-            if (votedPlayer) {
-                clickElementByImageInElement(votedPlayer, ability.actionRegex);
+            // Priest-Lover Suicide Play: If Priest is coupled with a wolf,
+            // use holy water on any valid non-lover to get voted out and end the game for XP.
+            if (isWolfCoupled) {
+                const myElement = allPlayerElements.find(p => p.textContent.includes(playerInfo.name));
+                const potentialTargets = allPlayerElements.filter(p =>
+                    p !== myElement && !coupleElements.includes(p) && !p.querySelector('img[src*="death_animation"]')
+                );
+
+                if (potentialTargets.length > 0) {
+                    const target = potentialTargets[Math.floor(Math.random() * potentialTargets.length)];
+                    log(`Priest-Wolf couple: Attempting suicide play by watering a random player: ${target.textContent.trim()}`);
+                    
+                    await click(clickableIcon); // Activate targeting mode
+                    await sleep(300);
+                    
+                    // Click the ability icon on the target player
+                    clickElementByImageInElement(target, /.*priest_holy_water.*\.png/);
+                }
+                return; // Exit after attempting the suicide play.
+            }
+            // Standard Priest Logic: Help the village by watering the most-voted player.
+            else {
+                const votedPlayerEl = await waitForCondition(() => allPlayerElements.find(p => findImageInElement(p, /.*vote_day_selected.*\.png/)), 90000, 500, 'Continue');
+                if (gameIsOver() || !votedPlayerEl) return;
+
+                log('Priest role: Using holy water on most-voted player.');
+                await click(clickableIcon);
+                await sleep(300);
+                clickElementByImageInElement(votedPlayerEl, /.*priest_holy_water.*\.png/);
+            }
+        }
+        // --- Shooter Logic ---
+        else if (playerInfo.role === 'Shooter') {
+            // The old generic ability block is removed. Shooter logic is now just this call.
+            await shooterAction(playerInfo, coupleElements, allPlayerElements);
+        }
+    }
+}
+
+/**
+ * Contains the main logic for actions taken during the night.
+ * @param {object} playerInfo
+ * @param {HTMLElement[]} coupleElements
+ * @param {HTMLElement[]} allPlayerElements
+ */
+async function inGameNight(playerInfo, coupleElements, allPlayerElements) {
+    if (gameIsOver()) return;
+    log(`inGameNight(): role = ${playerInfo.role}`);
+
+    // --- Night Helper Functions ---
+    const sendMessageAndAct = async (message, targetElement) => {
+        if (gameIsOver()) return;
+        log(`sendAction: ${message} | Target: ${targetElement?.textContent.trim()}`);        
+        await sendMessage(message);
+        if (targetElement) {
+            const isNotPriestCoupled = playerInfo.coupleRole1 !== 'Priest' && playerInfo.coupleRole2 !== 'Priest';
+            if (isNotPriestCoupled || playerInfo.role === 'Junior Werewolf') {
+                clickOutermostElement(targetElement);
             }
         }
     }
